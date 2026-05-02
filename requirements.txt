@@ -1,0 +1,27 @@
+# Веб-интерфейс
+streamlit>=1.30.0
+
+# LangChain (ядро и интеграции)
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+langchain-text-splitters>=0.3.0
+langchain-chroma>=0.1.2
+langchain-huggingface>=0.1.0
+langchain-gigachat>=0.3.8
+
+# GigaChat API клиент
+gigachat>=0.1.0
+
+# Векторная база данных
+chromadb>=0.4.0
+
+# Локальные эмбеддинги
+sentence-transformers>=2.2.0
+
+# Загрузка документов
+pypdf>=4.0.0
+docx2txt>=0.8
+
+# Переменные окружения
+python-dotenv>=1.0.0

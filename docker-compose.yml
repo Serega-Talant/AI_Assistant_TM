@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  assistant:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data           # Ваша база знаний
+      - ./vector_db:/app/vector_db # Сохраняем индексы на хосте
+    environment:
+      - GIGACHAT_API_KEY=${GIGACHAT_API_KEY}
+      - API_BASE64=${API_BASE64}
+    restart: unless-stopped
