@@ -1,114 +1,271 @@
 """
-Веб-интерфейс для студентов с авторизацией, обратной связью в боковой панели и современным дизайном.
+Веб-интерфейс для студентов с авторизацией, обратной связью и современным
+промышленным дизайном в тёмных тонах.
 Запуск: streamlit run app_streamlit.py
 """
 import streamlit as st
 from rag_engine import MachineryAssistant
 import streamlit.components.v1 as components
 import time
+import re
+
+# ---------- XSS-защита: фильтр опасных URI-схем ----------
+_DANGEROUS_SCHEMES = re.compile(
+    r'^\s*(javascript|vbscript|data)\s*:', re.IGNORECASE
+)
+
+def sanitize_markdown_links(text: str) -> str:
+    """Заменяет опасные URI-схемы в markdown-ссылках на '#'."""
+    return re.sub(
+        r'\[([^\]]*)\]\(([^)]*)\)',
+        lambda m: f'[{m.group(1)}]({"#" if _DANGEROUS_SCHEMES.match(m.group(2)) else m.group(2)})',
+        text
+    )
+# ------------------------------------------------
 
 # --- Настройка страницы ---
 st.set_page_config(
     page_title="Ассистент по Технологии машиностроения",
-    page_icon="🔧",
+    page_icon="⚙️",
     layout="centered",
 )
 
-# --- Кастомный CSS ---
+# --- Кастомный CSS: Индустриальная тёмная тема (улучшенная) ---
 st.markdown("""
 <style>
-    /* Общий фон */
-    .main {
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-    }
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap');
+
+    /* ----- Глобальный фон (мягкая чертежная сетка) ----- */
     .stApp {
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #0b0f13; 
+        background-image: 
+            linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+        background-size: 32px 32px;
+        font-family: 'Inter', sans-serif;
     }
     
-    /* Карточки сообщений (общие) */
+    /* ----- Типографика ----- */
+    body, .stMarkdown, p, li {
+        color: #b0b7c3;
+    }
+    h1, h2, h3, h4, h5, h6 {
+        color: #e2e8f0;
+        font-weight: 600;
+        letter-spacing: -0.3px;
+    }
+    code {
+        font-family: 'JetBrains Mono', monospace;
+        color: #f6ad55 !important; 
+        background-color: rgba(246, 173, 85, 0.12) !important;
+        border-radius: 4px;
+        padding: 2px 6px;
+    }
+    
+    /* ----- Боковая панель ----- */
+    [data-testid="stSidebar"] {
+        background-color: #11151a;
+        border-right: 1px solid #2d3748;
+    }
+    [data-testid="stSidebar"] * {
+        color: #cbd5e0 !important;
+    }
+    
+    /* ----- Карточки сообщений ----- */
     .stChatMessage {
-        border-radius: 15px;
-        padding: 10px;
-        margin: 8px 0;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-        transition: all 0.2s ease;
+        border-radius: 10px;
+        padding: 16px;
+        margin: 12px 0;
+        border: 1px solid #2d3748;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
     .stChatMessage:hover {
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        transform: translateY(-1px);
+        border-color: #dd6b20; 
+        box-shadow: 0 2px 12px rgba(221, 107, 32, 0.12);
     }
     
-    /* Сообщения пользователя – тёмный фон */
+    /* Сообщения пользователя */
     [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
-        background-color: #1e3c72;  /* тёмно-синий */
-        color: #ecf0f1;
+        background-color: #1e2229;
+        border-left: 4px solid #4a5568;
     }
-    [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) .stMarkdown {
-        color: #ecf0f1;
-    }
-    
-    /* Сообщения ассистента – тёмная тема */
+    /* Сообщения ассистента */
     [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) {
-        background-color: #2c3e50;
-        color: #ecf0f1;
-    }
-    [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) .stMarkdown {
-        color: #ecf0f1;
+        background-color: #12161c;
+        border-left: 4px solid #dd6b20; 
     }
     
-    /* Заголовок "Ваш ИИ‑помощник" – светлый текст на тёмном фоне */
-    .assistant-header {
-        background: linear-gradient(135deg, #2c3e50, #1a252f);
-        border-radius: 12px;
-        padding: 12px;
-        margin: 10px 0;
-        text-align: center;
-    }
-    .assistant-header h3 {
-        color: #ffffff;
-        margin: 0;
-        font-weight: 600;
-        text-shadow: 1px 1px 3px rgba(0,0,0,0.5);
-    }
-    
-    /* Кнопки */
+    /* ----- Кнопки ----- */
     .stButton > button {
-        border-radius: 10px;
-        background: #4CAF50;
-        color: white;
-        font-weight: 600;
-        border: none;
-        padding: 8px 16px;
-        transition: all 0.3s ease;
+        border-radius: 8px;
+        background-color: #2d3748;
+        color: #e2e8f0;
+        font-weight: 500;
+        border: 1px solid #4a5568;
+        padding: 10px 20px;
+        transition: all 0.2s ease;
+        font-size: 0.9rem;
+        letter-spacing: 0.2px;
     }
     .stButton > button:hover {
-        background: #45a049;
-        box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
-        transform: translateY(-2px);
+        background-color: #dd6b20;
+        color: #ffffff;
+        border-color: #dd6b20;
+        box-shadow: 0 0 12px rgba(221, 107, 32, 0.35);
+    }
+    .stButton > button:active {
+        transform: translateY(1px);
+        box-shadow: 0 0 8px rgba(221, 107, 32, 0.5);
     }
     
-    /* Разделитель */
-    hr {
-        border: none;
-        height: 2px;
-        background: linear-gradient(90deg, #4CAF50, #2196F3);
-        margin: 20px 0;
-    }
-    
-    /* Поле ввода */
+    /* ----- Поле ввода ----- */
     .stChatInput input {
-        border-radius: 20px;
-        border: 2px solid #e0e0e0;
-        padding: 12px 20px;
+        border-radius: 8px;
+        border: 1px solid #4a5568;
+        padding: 14px 20px;
+        background-color: #11151a;
+        color: #e2e8f0;
+        font-size: 1rem;
+        transition: border-color 0.2s, box-shadow 0.2s;
     }
     .stChatInput input:focus {
-        border-color: #4CAF50;
-        box-shadow: 0 0 10px rgba(76, 175, 80, 0.2);
+        border-color: #dd6b20;
+        box-shadow: 0 0 0 3px rgba(221, 107, 32, 0.25);
+        outline: none;
     }
+    .stChatInput input::placeholder {
+        color: #6b7280;
+    }
+    
+    /* ----- Разделитель ----- */
+    hr {
+        border: none;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
+        margin: 25px 0;
+    }
+    
+    /* ----- Декоративный блок-заголовок ----- */
+    .assistant-header {
+        background: linear-gradient(145deg, #1a202c, #11151a);
+        border-radius: 10px;
+        padding: 22px 20px;
+        margin: 10px 0 20px 0;
+        text-align: center;
+        border: 1px solid #2d3748;
+        box-shadow: inset 0 2px 4px rgba(255,255,255,0.02);
+    }
+    .assistant-header h3 {
+        color: #e2e8f0;
+        margin: 10px 0 0 0;
+        font-weight: 600;
+        font-size: 1.2rem;
+    }
+    
+    /* ----- Приветственная карточка ----- */
+    .greeting-card {
+        background-color: rgba(26, 32, 44, 0.5);
+        border-left: 3px solid #718096;
+        border-radius: 0 8px 8px 0;
+        padding: 16px;
+        margin: 10px 0;
+    }
+    .greeting-card p {
+        font-size: 0.95rem;
+        line-height: 1.5;
+        margin: 0;
+        color: #cbd5e0;
+    }
+    
+    /* ----- Совет вверху основного окна ----- */
+    .advice-box {
+        background: rgba(221, 107, 32, 0.06);
+        border: 1px solid rgba(221, 107, 32, 0.25);
+        border-left: 4px solid #dd6b20;
+        padding: 14px 18px;
+        border-radius: 8px;
+        margin-bottom: 28px;
+        color: #cbd5e0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    /* ----- БЛОК ОБРАТНОЙ СВЯЗИ (УЛУЧШЕННЫЙ ДИЗАЙН) ----- */
+    .feedback-module {
+        background: linear-gradient(180deg, #161b22 0%, #0b0f13 100%);
+        border: 1px solid #2d3748;
+        border-radius: 8px 8px 0 0;
+        padding: 16px;
+        position: relative;
+        overflow: hidden;
+    }
+    .feedback-module::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 2px;
+        background: linear-gradient(90deg, transparent, #dd6b20, transparent);
+    }
+    .feedback-title-wrapper {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+    }
+    .feedback-title-wrapper h3 {
+        margin: 0;
+        font-size: 1.1rem;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #e2e8f0;
+    }
+    /* Пульсирующий индикатор */
+    .status-indicator {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.75rem;
+        color: #48bb78;
+        font-family: 'JetBrains Mono', monospace;
+        background: rgba(72, 187, 120, 0.1);
+        padding: 2px 10px;
+        border-radius: 12px;
+        border: 1px solid rgba(72, 187, 120, 0.2);
+    }
+    .status-dot {
+        width: 7px;
+        height: 7px;
+        background-color: #48bb78;
+        border-radius: 50%;
+        box-shadow: 0 0 6px #48bb78;
+        animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+        0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(72, 187, 120, 0.7); }
+        70% { transform: scale(1.1); box-shadow: 0 0 0 5px rgba(72, 187, 120, 0); }
+        100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(72, 187, 120, 0); }
+    }
+    .feedback-desc {
+        color: #8b949e;
+        font-size: 0.85rem;
+        margin: 0;
+        line-height: 1.4;
+    }
+    
+    /* Скрываем стандартный хедер Streamlit */
+    header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-# ==================== АВТОРИЗАЦИЯ ====================
+# ==================== АВТОРИЗАЦИЯ с защитой от перебора ====================
+MAX_LOGIN_ATTEMPTS = 5
+BLOCK_TIME_SECONDS = 300  # 5 минут
+
 def check_credentials(username, password):
     return username == "TM" and password == "123"
 
@@ -117,54 +274,84 @@ def logout():
         del st.session_state[key]
     st.rerun()
 
+if "login_attempts" not in st.session_state:
+    st.session_state.login_attempts = 0
+if "last_attempt_time" not in st.session_state:
+    st.session_state.last_attempt_time = 0
+
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
 if not st.session_state.logged_in:
-    st.title("🔒 Вход в систему")
-    with st.form("login_form"):
-        username = st.text_input("Логин")
-        password = st.text_input("Пароль", type="password")
-        submitted = st.form_submit_button("Войти")
-        if submitted:
-            if check_credentials(username, password):
-                st.session_state.logged_in = True
-                st.session_state.login_time = time.time()
-                st.success("Вход выполнен успешно!")
-                st.rerun()
-            else:
-                st.error("Неверный логин или пароль. Попробуйте ещё раз.")
+    if st.session_state.login_attempts >= MAX_LOGIN_ATTEMPTS:
+        time_since = time.time() - st.session_state.last_attempt_time
+        if time_since < BLOCK_TIME_SECONDS:
+            remaining = int(BLOCK_TIME_SECONDS - time_since)
+            st.error(f"🔒 Слишком много попыток. Попробуйте через {remaining // 60} мин {remaining % 60} сек.")
+            st.stop()
+        else:
+            st.session_state.login_attempts = 0
+
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("""
+        <div style="text-align: center; margin-bottom: 20px;">
+            <h1 style="color: #e2e8f0;">🔒 Вход в систему</h1>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        with st.form("login_form"):
+            username = st.text_input("Логин")
+            password = st.text_input("Пароль", type="password")
+            submitted = st.form_submit_button("Войти", use_container_width=True)
+            
+            if submitted:
+                if check_credentials(username, password):
+                    st.session_state.logged_in = True
+                    st.session_state.login_time = time.time()
+                    st.session_state.login_attempts = 0
+                    st.success("Вход выполнен успешно!")
+                    time.sleep(0.3)
+                    st.rerun()
+                else:
+                    st.session_state.login_attempts += 1
+                    st.session_state.last_attempt_time = time.time()
+                    st.error("Неверный логин или пароль.")
     st.stop()
 
 # ==================== ОСНОВНОЙ ИНТЕРФЕЙС ====================
 
-st.title("🔧 Ассистент по Технологии машиностроения")
+st.title("⚙️ Ассистент по Технологии машиностроения")
 st.markdown("""
-<div style="background: rgba(76, 175, 80, 0.1); border-left: 5px solid #4CAF50; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-    <strong>✨ Совет:</strong> Задайте вопрос так, как спросили бы преподавателя. Я найду ответ в проверенных лекциях и глоссарии.
+<div class="advice-box">
+    <span style="font-size: 1.5rem;">✨</span>
+    <div>
+        <strong>Совет:</strong> Задайте вопрос так, как спросили бы преподавателя. Я найду ответ в проверенных лекциях и глоссарии.
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
 with st.sidebar:
-    # Приветствие с тёмным фоном и светлым текстом
     st.markdown("""
     <div class="assistant-header">
-        <span style="font-size: 40px;">🤖</span>
+        <span style="font-size: 52px; filter: drop-shadow(0 0 12px rgba(221,107,32,0.5));">🤖</span>
         <h3>Ваш ИИ‑помощник</h3>
     </div>
     """, unsafe_allow_html=True)
     
     st.markdown("""
-    <div style="background: linear-gradient(135deg, #e0f7fa, #e8f5e9); padding: 15px; border-radius: 12px; margin: 10px 0;">
-        <p style="color: #1e3c72; font-weight: 500; margin: 0;">
-            Привет! Я твой напарник по специальности «Технология машиностроения». 
+    <div class="greeting-card">
+        <p>
+            ⚙️ Привет! Я твой напарник по специальности «Технология машиностроения». 
             Отвечаю быстро, ссылаюсь на материалы и не придумываю лишнего.
         </p>
     </div>
     """, unsafe_allow_html=True)
 
-    # --- Кнопки управления ---
+    st.markdown("<br>", unsafe_allow_html=True)
+    
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🧹 Очистить историю", use_container_width=True):
@@ -178,7 +365,6 @@ with st.sidebar:
     
     st.divider()
     
-    # Возможности
     st.subheader("🚀 Что я умею")
     st.markdown("""
     - 📖 Объяснять термины из глоссария  
@@ -189,24 +375,30 @@ with st.sidebar:
     
     st.divider()
     
-    # Обратная связь
-    st.subheader("📝 Обратная связь")
+    # --- ОБНОВЛЕННЫЙ БЛОК ОБРАТНОЙ СВЯЗИ (сохранён ваш дизайн) ---
     st.markdown("""
-    <p style="color: #999; font-size: 14px;">
-        Помоги мне стать лучше! Оставь пожелание или сообщи об ошибке.
-    </p>
+    <div class="feedback-module">
+        <div class="feedback-title-wrapper">
+            <h3>📝 Обратная связь</h3>
+            <div class="status-indicator">
+                <div class="status-dot"></div> Online
+            </div>
+        </div>
+        <p class="feedback-desc">Помоги мне стать лучше! Оставь пожелание или сообщи об ошибке в форме ниже.</p>
+    </div>
     """, unsafe_allow_html=True)
+    
     components.html(
         """
-        <iframe src="https://forms.yandex.ru/u/69a964ed6d2d73372c353b06?iframe=1&theme=light"
+        <iframe src="https://forms.yandex.ru/u/69a964ed6d2d73372c353b06?iframe=1&theme=dark"
                 frameborder="0"
                 width="100%"
-                height="600"
+                height="630"
                 scrolling="yes"
-                style="background-color: #ffffff; border-radius: 8px;">
+                style="background-color: #0b0f13; border-radius: 0 0 8px 8px; border: 1px solid #2d3748; border-top: none;">
         </iframe>
         """,
-        height=620,
+        height=630,
     )
 
 # --- Ассистент ---
@@ -225,13 +417,15 @@ if "messages" not in st.session_state:
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+        safe_content = sanitize_markdown_links(message["content"])
+        st.markdown(safe_content)
 
 # --- Поле ввода ---
 if prompt := st.chat_input("Введите ваш вопрос..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    safe_prompt = sanitize_markdown_links(prompt)
+    st.session_state.messages.append({"role": "user", "content": safe_prompt})
     with st.chat_message("user"):
-        st.markdown(prompt)
+        st.markdown(safe_prompt)
 
     with st.chat_message("assistant"):
         with st.spinner("Думаю..."):
@@ -243,6 +437,7 @@ if prompt := st.chat_input("Введите ваш вопрос..."):
                 for src in response["sources"]:
                     sources_text += f"- {src}\n"
                 answer += sources_text
-
-            st.markdown(answer)
-            st.session_state.messages.append({"role": "assistant", "content": answer})
+            
+            safe_answer = sanitize_markdown_links(answer)
+            st.markdown(safe_answer)
+            st.session_state.messages.append({"role": "assistant", "content": safe_answer})
