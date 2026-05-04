@@ -6,9 +6,9 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      - ./data:/app/data           # Ваша база знаний
-      - ./vector_db:/app/vector_db # Сохраняем индексы на хосте
+      - ./data:/app/data
+      - ./vector_db:/app/vector_db
     environment:
-      - GIGACHAT_API_KEY=${GIGACHAT_API_KEY}
-      - API_BASE64=${API_BASE64}
+      - GIGACHAT_CREDENTIALS=${GIGACHAT_CREDENTIALS}
+      - GIGACHAT_SCOPE=${GIGACHAT_SCOPE}
     restart: unless-stopped
