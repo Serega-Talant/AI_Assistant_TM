@@ -1,4 +1,3 @@
-#Aaa
 # 🔧 ИИ-ассистент для студентов специальности «Технология машиностроения»
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue)](https://python.org)
