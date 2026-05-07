@@ -132,6 +132,7 @@ docker-compose exec assistant python ingest.py
 .
 ├── data/                     # Ваши документы (.txt, .pdf, .docx)
 ├── vector_db/                # Хранилище векторов (создаётся автоматически)
+├── sessions/                 # Файлы сессий пользователей (создаётся автоматически)
 ├── .env.example              # Пример файла с переменными окружения
 ├── .env                      # Реальные ключи (не включается в Git)
 ├── requirements.txt          # Python-зависимости
