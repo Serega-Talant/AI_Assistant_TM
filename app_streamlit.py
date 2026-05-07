@@ -1,6 +1,6 @@
 """
 Веб-интерфейс для студентов с авторизацией, обратной связью и современным
-промышленным дизайном в тёмных тонах.
+промышленным дизайном в тёмных тонах. Усиленная безопасность.
 Запуск: streamlit run app_streamlit.py
 """
 import streamlit as st
@@ -8,20 +8,24 @@ from rag_engine import MachineryAssistant
 import streamlit.components.v1 as components
 import time
 import re
+import html as html_module
 
-# ---------- XSS-защита: фильтр опасных URI-схем ----------
-_DANGEROUS_SCHEMES = re.compile(
-    r'^\s*(javascript|vbscript|data)\s*:', re.IGNORECASE
-)
+# ---------- XSS-защита: фильтр опасных URI-схем с декодированием HTML-entities ----------
+_SAFE_SCHEMES = re.compile(r'^(https?|mailto|tel)://', re.IGNORECASE)
+_MD_LINK = re.compile(r'\[([^\]]*)\]\(([^)]*)\)')
 
 def sanitize_markdown_links(text: str) -> str:
-    """Заменяет опасные URI-схемы в markdown-ссылках на '#'."""
-    return re.sub(
-        r'\[([^\]]*)\]\(([^)]*)\)',
-        lambda m: f'[{m.group(1)}]({"#" if _DANGEROUS_SCHEMES.match(m.group(2)) else m.group(2)})',
-        text
-    )
-# ------------------------------------------------
+    """Заменяет опасные URI в markdown-ссылках на '#', устойчив к HTML-entities."""
+    def replace_link(m):
+        label = m.group(1)
+        url_raw = m.group(2).strip()
+        url = html_module.unescape(url_raw)
+        url_normalized = re.sub(r'[\s\x00-\x1f]+', '', url)
+        if (_SAFE_SCHEMES.match(url_normalized) or url_normalized.startswith(('#', '/'))):
+            return f'[{label}]({url})'
+        return f'[{label}](#)'
+    return _MD_LINK.sub(replace_link, text)
+# ----------------------------------------------------------------
 
 # --- Настройка страницы ---
 st.set_page_config(
@@ -375,7 +379,7 @@ with st.sidebar:
     
     st.divider()
     
-    # --- ОБНОВЛЕННЫЙ БЛОК ОБРАТНОЙ СВЯЗИ (сохранён ваш дизайн) ---
+    # --- БЛОК ОБРАТНОЙ СВЯЗИ (работает как прежде) ---
     st.markdown("""
     <div class="feedback-module">
         <div class="feedback-title-wrapper">
@@ -388,10 +392,10 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
     
+    # Форма Яндекс.Форм без sandbox (безопасность на уровне HTTP-заголовков)
     components.html(
         """
         <iframe src="https://forms.yandex.ru/u/69a964ed6d2d73372c353b06?iframe=1&theme=dark"
-                frameborder="0"
                 width="100%"
                 height="630"
                 scrolling="yes"
