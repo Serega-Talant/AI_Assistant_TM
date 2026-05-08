@@ -1,0 +1,20 @@
+# Секреты — никогда не попадают в образ
+.env
+
+# Данные, монтируемые как тома
+vector_db/
+sessions/
+
+# Python-мусор
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore

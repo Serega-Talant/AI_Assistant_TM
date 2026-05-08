@@ -10,4 +10,5 @@ services:
     environment:
       - GIGACHAT_CREDENTIALS=${GIGACHAT_CREDENTIALS}
       - GIGACHAT_SCOPE=${GIGACHAT_SCOPE}
+      - TM_PASSWORD=${TM_PASSWORD}       # ← добавьте эту строку
     restart: unless-stopped

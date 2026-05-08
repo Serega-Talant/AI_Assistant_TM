@@ -6,14 +6,14 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем код приложения
+# Копируем только исходный код — .env НЕ копируется в образ.
+# Секреты передаются через переменные окружения в docker-compose.yml.
 COPY *.py .
-COPY .env .
 
 # Копируем папку с документами
 COPY data ./data
 
-# Папка vector_db создаётся через том при запуске, копировать её не нужно
+# vector_db и sessions создаются через тома при запуске
 
 EXPOSE 8501
 
