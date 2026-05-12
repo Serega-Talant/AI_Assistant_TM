@@ -4,11 +4,13 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      - ./data:/app/data
-      - ./vector_db:/app/vector_db
-      - ./sessions:/app/sessions
+      - data:/app/data
+      - vector_db:/app/vector_db
+      - sessions:/app/sessions
     environment:
       - GIGACHAT_CREDENTIALS=${GIGACHAT_CREDENTIALS}
       - GIGACHAT_SCOPE=${GIGACHAT_SCOPE}
       - TM_PASSWORD=${TM_PASSWORD}       # ← добавьте эту строку
     restart: unless-stopped
+volumes:  
+  assistant:
