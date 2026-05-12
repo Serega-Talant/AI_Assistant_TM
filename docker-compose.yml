@@ -4,9 +4,9 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      - data:/app/data
-      - vector_db:/app/vector_db
-      - sessions:/app/sessions
+      - assistant:/app/data
+      - assistant:/app/vector_db
+      - assistant:/app/sessions
     environment:
       - GIGACHAT_CREDENTIALS=${GIGACHAT_CREDENTIALS}
       - GIGACHAT_SCOPE=${GIGACHAT_SCOPE}
