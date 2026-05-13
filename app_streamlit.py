@@ -14,11 +14,7 @@ import uuid
 import json
 import hashlib
 import hmac
-import os
 from pathlib import Path
-from dotenv import load_dotenv
-
-load_dotenv()
 
 # ---------- Папка для хранения сессий ----------
 SESSIONS_DIR = Path("sessions")
@@ -27,25 +23,17 @@ SESSIONS_DIR.mkdir(exist_ok=True)
 # =============================================================================
 # ХЕШИРОВАНИЕ ПАРОЛЕЙ
 # Алгоритм: PBKDF2-HMAC-SHA256, 310 000 итераций (рекомендация OWASP 2024)
-#
-# Пароль берётся из переменной окружения TM_PASSWORD (не из исходного кода!).
-# В .env добавьте строку: TM_PASSWORD=ваш_надёжный_пароль
+# Для смены пароля: измените _CRED_SALT (16 байт hex) и обновите пароль ниже.
 # =============================================================================
 _PBKDF2_ITERS = 310_000
 
-# Фиксированная соль для пользователя "TM" (16 байт, hex-строка).
-# Для смены соли: import os; os.urandom(16).hex()
+# Фиксированная соль для пользователя "TM" (16 байт, hex-строка)
+# Чтобы сгенерировать новую: import os; os.urandom(16).hex()
 _TM_SALT = bytes.fromhex("3a7f92c1d5e04b68a19f3c82e6b0d471")
 
-# ✅ Пароль из переменной окружения — не хранится в коде
-_raw_password = os.getenv("TM_PASSWORD", "").encode("utf-8")
-if not _raw_password:
-    raise EnvironmentError(
-        "Переменная окружения TM_PASSWORD не задана. "
-        "Добавьте её в .env: TM_PASSWORD=ваш_пароль"
-    )
-_TM_HASH = hashlib.pbkdf2_hmac("sha256", _raw_password, _TM_SALT, _PBKDF2_ITERS).hex()
-del _raw_password   # убираем пароль из памяти как можно раньше
+# Хеш вычисляется один раз при старте из эталонного пароля.
+# Замените b"123" на нужный пароль и перезапустите — хеш обновится автоматически.
+_TM_HASH = hashlib.pbkdf2_hmac("sha256", b"123", _TM_SALT, _PBKDF2_ITERS).hex()
 
 # Словарь пользователей: имя → (соль, хеш)
 _VALID_USERS: dict[str, tuple[bytes, str]] = {
@@ -57,7 +45,7 @@ def check_credentials(username: str, password: str) -> bool:
     """Timing-safe проверка учётных данных."""
     entry = _VALID_USERS.get(username)
     if not entry:
-        # Фиктивный расчёт для защиты от timing-атак
+        # Выполняем фиктивный расчёт, чтобы не допустить timing-атаку
         hashlib.pbkdf2_hmac("sha256", b"", b"\x00" * 16, _PBKDF2_ITERS)
         return False
     salt, stored_hash = entry
@@ -70,19 +58,19 @@ def check_credentials(username: str, password: str) -> bool:
 # =============================================================================
 
 # ---------- XSS-защита ----------
-_SAFE_SCHEMES = re.compile(r"^(https?|mailto|tel)://", re.IGNORECASE)
-_MD_LINK = re.compile(r"\[([^\]]*)\]\(([^)]*)\)")
+_SAFE_SCHEMES = re.compile(r'^(https?|mailto|tel)://', re.IGNORECASE)
+_MD_LINK = re.compile(r'\[([^\]]*)\]\(([^)]*)\)')
 
 
 def sanitize_markdown_links(text: str) -> str:
-    def replace_link(m: re.Match) -> str:
+    def replace_link(m):
         label = m.group(1)
         url_raw = m.group(2).strip()
         url = html_module.unescape(url_raw)
-        url_normalized = re.sub(r"[\s\x00-\x1f]+", "", url)
-        if _SAFE_SCHEMES.match(url_normalized) or url_normalized.startswith(("#", "/")):
-            return f"[{label}]({url})"
-        return f"[{label}](#)"
+        url_normalized = re.sub(r'[\s\x00-\x1f]+', '', url)
+        if _SAFE_SCHEMES.match(url_normalized) or url_normalized.startswith(('#', '/')):
+            return f'[{label}]({url})'
+        return f'[{label}](#)'
     return _MD_LINK.sub(replace_link, text)
 
 
@@ -112,25 +100,6 @@ def delete_cookie(name: str) -> None:
     )
 
 
-# ---------- Очистка устаревших сессий ----------
-def cleanup_stale_sessions(max_age_seconds: int = 86_400) -> None:
-    """
-    Удаляет auth-токены старше max_age_seconds (по умолчанию 24 ч).
-    Вызывается один раз при старте приложения.
-    """
-    now = time.time()
-    for f in SESSIONS_DIR.glob("auth_*.json"):
-        try:
-            data = json.loads(f.read_text(encoding="utf-8"))
-            if now - data.get("login_time", 0) > max_age_seconds:
-                f.unlink()
-        except (json.JSONDecodeError, OSError):
-            f.unlink()   # битый файл — тоже удаляем
-
-
-cleanup_stale_sessions()
-
-
 # --- Настройка страницы ---
 st.set_page_config(
     page_title="Ассистент по Технологии машиностроения",
@@ -144,8 +113,8 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap');
 
     .stApp {
-        background-color: #0b0f13;
-        background-image:
+        background-color: #0b0f13; 
+        background-image: 
             linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
             linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
         background-size: 32px 32px;
@@ -155,7 +124,7 @@ st.markdown("""
     h1, h2, h3, h4, h5, h6 { color: #e2e8f0; font-weight: 600; letter-spacing: -0.3px; }
     code {
         font-family: 'JetBrains Mono', monospace;
-        color: #f6ad55 !important;
+        color: #f6ad55 !important; 
         background-color: rgba(246, 173, 85, 0.12) !important;
         border-radius: 4px;
         padding: 2px 6px;
@@ -174,7 +143,7 @@ st.markdown("""
         transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
     .stChatMessage:hover {
-        border-color: #dd6b20;
+        border-color: #dd6b20; 
         box-shadow: 0 2px 12px rgba(221, 107, 32, 0.12);
     }
     [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
@@ -183,7 +152,7 @@ st.markdown("""
     }
     [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) {
         background-color: #12161c;
-        border-left: 4px solid #dd6b20;
+        border-left: 4px solid #dd6b20; 
     }
     .stButton > button {
         border-radius: 8px;
@@ -303,16 +272,25 @@ st.markdown("""
 
 
 # ==================== Работа с файлами сессий ====================
-def _auth_file(sid: str) -> Path:
-    return SESSIONS_DIR / f"auth_{sid}.json"
+#
+# Один файл на каждую активную вкладку: sessions/session_{uuid}.json
+#
+#   Хранит: username, login_time, messages (история чата этой вкладки).
+#
+#   Жизненный цикл:
+#   • Создаётся при входе (новый UUID).
+#   • Переживает F5: cookie жива → тот же UUID → тот же файл → чат на месте.
+#   • При закрытии вкладки браузер удаляет session-cookie; при следующем
+#     открытии создаётся новый UUID → свежий чат → чужая история недоступна.
+#   • Удаляется явно при нажатии «Выйти».
+#   • Два разных пользователя одновременно → разные UUID → изолированные чаты.
 
-def _chat_file(username: str) -> Path:
-    return SESSIONS_DIR / f"chat_{username}.json"
+def _session_file(sid: str) -> Path:
+    return SESSIONS_DIR / f"session_{sid}.json"
 
 
-# --- Auth-токен ---
-def load_auth(sid: str) -> dict | None:
-    f = _auth_file(sid)
+def load_session(sid: str) -> dict | None:
+    f = _session_file(sid)
     if f.exists():
         try:
             with open(f, "r", encoding="utf-8") as fp:
@@ -321,36 +299,31 @@ def load_auth(sid: str) -> dict | None:
             return None
     return None
 
-def save_auth(sid: str, username: str) -> None:
-    with open(_auth_file(sid), "w", encoding="utf-8") as fp:
-        json.dump({"username": username, "login_time": time.time()}, fp)
 
-def delete_auth(sid: str) -> None:
-    f = _auth_file(sid)
+def save_session(sid: str, username: str, messages: list[dict]) -> None:
+    data = {
+        "username": username,
+        "login_time": st.session_state.get("login_time", time.time()),
+        "messages": messages,
+    }
+    with open(_session_file(sid), "w", encoding="utf-8") as fp:
+        json.dump(data, fp, ensure_ascii=False)
+
+
+def delete_session(sid: str) -> None:
+    f = _session_file(sid)
     if f.exists():
         f.unlink()
 
 
-# --- Чат пользователя ---
-def load_chat(username: str) -> list[dict]:
-    """Загружает историю чата. Возвращает приветствие, если файла нет."""
-    f = _chat_file(username)
-    if f.exists():
-        try:
-            with open(f, "r", encoding="utf-8") as fp:
-                data = json.load(fp)
-            if isinstance(data, list) and data:
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return _build_initial_messages()
-
-def save_chat(username: str, messages: list[dict]) -> None:
-    with open(_chat_file(username), "w", encoding="utf-8") as fp:
-        json.dump(messages, fp, ensure_ascii=False)
-
-
 # ==================== ВОССТАНОВЛЕНИЕ СЕССИИ ====================
+# Логика сессий:
+#   • st.session_state  — живёт, пока открыта вкладка (не сбрасывается на rerun)
+#   • sessions/*.json   — персистентное хранилище чата
+#   • session cookie    — связывает браузер с JSON-файлом; браузер удаляет её
+#                         при закрытии вкладки/окна → при повторном открытии
+#                         требуется авторизация
+
 if "logged_in" not in st.session_state:
     sid_from_cookie: str | None = None
     try:
@@ -359,18 +332,20 @@ if "logged_in" not in st.session_state:
         sid_from_cookie = None
 
     if sid_from_cookie:
-        auth_data = load_auth(sid_from_cookie)
-        if auth_data:
-            _username = auth_data["username"]
+        session_data = load_session(sid_from_cookie)
+        if session_data:
+            # Сессия найдена → восстанавливаем без авторизации
             st.session_state.logged_in = True
             st.session_state.sid = sid_from_cookie
-            st.session_state.username = _username
-            st.session_state.messages = load_chat(_username)
-            st.session_state.login_time = auth_data["login_time"]
+            st.session_state.username = session_data["username"]
+            st.session_state.messages = session_data["messages"]
+            st.session_state.login_time = session_data["login_time"]
             st.session_state.login_attempts = 0
         else:
+            # Кука есть, но файл отсутствует или повреждён → чистим куку
             delete_cookie("session_id")
 
+# Инициализируем недостающие ключи состояния
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "login_attempts" not in st.session_state:
@@ -397,15 +372,17 @@ def _build_initial_messages() -> list[dict]:
 
 
 def login_user(username: str) -> str:
+    """Создаёт новую сессию (новый UUID) с пустым чатом. Устанавливает cookie."""
     sid = str(uuid.uuid4())
-    save_auth(sid, username)
+    initial_messages = _build_initial_messages()
+    save_session(sid, username, initial_messages)
     set_session_cookie("session_id", sid)
-    return sid
+    return sid, initial_messages
 
 
 def logout() -> None:
     if "sid" in st.session_state:
-        delete_auth(st.session_state.sid)
+        delete_session(st.session_state.sid)
         delete_cookie("session_id")
     for key in list(st.session_state.keys()):
         del st.session_state[key]
@@ -444,13 +421,13 @@ if not st.session_state.logged_in:
 
             if submitted:
                 if check_credentials(username, password):
-                    sid = login_user(username)
+                    sid, initial_messages = login_user(username)
                     st.session_state.logged_in = True
                     st.session_state.sid = sid
                     st.session_state.username = username
                     st.session_state.login_time = time.time()
                     st.session_state.login_attempts = 0
-                    st.session_state.messages = load_chat(username)
+                    st.session_state.messages = initial_messages
                     st.rerun()
                 else:
                     st.session_state.login_attempts += 1
@@ -483,7 +460,7 @@ with st.sidebar:
     st.markdown("""
     <div class="greeting-card">
         <p>
-            ⚙️ Привет! Я твой напарник по специальности «Технология машиностроения».
+            ⚙️ Привет! Я твой напарник по специальности «Технология машиностроения». 
             Отвечаю быстро, ссылаюсь на материалы и не придумываю лишнего.
         </p>
     </div>
@@ -497,8 +474,8 @@ with st.sidebar:
             st.session_state.messages = [
                 {"role": "assistant", "content": "История очищена. Задайте новый вопрос."}
             ]
-            if "username" in st.session_state:
-                save_chat(st.session_state.username, st.session_state.messages)
+            if "sid" in st.session_state:
+                save_session(st.session_state.sid, st.session_state.username, st.session_state.messages)
             st.rerun()
     with col2:
         if st.button("🚪 Выйти", use_container_width=True):
@@ -507,10 +484,10 @@ with st.sidebar:
     st.divider()
     st.subheader("🚀 Что я умею")
     st.markdown("""
-    - 📖 Объяснять термины из глоссария
-    - 🧪 Разбирать технологические процессы
-    - 📚 Опираться только на твои лекции
-    - ⚡ Давать мгновенные ответы с источниками
+    - 📖 Объяснять термины из глоссария  
+    - 🧪 Разбирать технологические процессы  
+    - 📚 Опираться только на твои лекции  
+    - ⚡ Давать мгновенные ответы с источниками  
     """)
     st.divider()
 
@@ -541,7 +518,7 @@ with st.sidebar:
 
 # --- Ассистент ---
 @st.cache_resource
-def load_assistant() -> MachineryAssistant:
+def load_assistant():
     return MachineryAssistant()
 
 
@@ -579,5 +556,6 @@ if prompt := st.chat_input("Введите ваш вопрос..."):
             st.markdown(safe_answer)
             st.session_state.messages.append({"role": "assistant", "content": safe_answer})
 
-    if "username" in st.session_state:
-        save_chat(st.session_state.username, st.session_state.messages)
+    # Сохраняем чат после каждого сообщения
+    if "sid" in st.session_state:
+        save_session(st.session_state.sid, st.session_state.username, st.session_state.messages)
