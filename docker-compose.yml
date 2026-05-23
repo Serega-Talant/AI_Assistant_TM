@@ -1,14 +1,38 @@
+# docker-compose.yml — конфигурация запуска контейнеров через Docker Compose.
+#
+# Compose упрощает управление контейнерами: вместо длинных docker run-команд
+# с кучей флагов — одна команда docker compose up.
+#
+# Команды:
+#   docker compose build           — собрать образ из Dockerfile
+#   docker compose up -d           — запустить в фоне (detached)
+#   docker compose down            — остановить и удалить контейнеры
+#   docker compose logs -f         — смотреть логи в реальном времени
+#   docker compose run --rm assistant python ingest.py  — разовая команда
+
 services:
   assistant:
+    # Собираем образ из Dockerfile в текущей директории (.)
     build: .
+    # Открываем порт 8501 хоста → порт 8501 контейнера.
+    # Приложение доступно по http://localhost:8501
     ports:
       - "8501:8501"
+    # вся папка /app (включая vector_db/ и sessions/)
+    # хранится в Docker volume "assistant" — данные переживают пересборку образа.
     volumes:
       - assistant:/app
+    # Переменные окружения передаются из файла .env на хосте.
+    # .env НЕ копируется в образ 
+    # для безопасности: переменные живут только в памяти запущенного контейнера.
     environment:
       - GIGACHAT_CREDENTIALS=${GIGACHAT_CREDENTIALS}
       - GIGACHAT_SCOPE=${GIGACHAT_SCOPE}
-      - TM_PASSWORD=${TM_PASSWORD}       # ← добавьте эту строку
+      - TM_PASSWORD=${TM_PASSWORD}
+    # Политика перезапуска: "unless-stopped" значит:
+    #   • Перезапускать при падении (crash, OOM-kill, перезагрузка сервера)
+    #   • НЕ перезапускать если остановлен вручную (docker compose stop)
     restart: unless-stopped
-volumes:  
+
+volumes:
   assistant:

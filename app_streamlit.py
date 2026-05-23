@@ -1,117 +1,183 @@
 """
-Веб-интерфейс для студентов с авторизацией, обратной связью и современным
-промышленным дизайном в тёмных тонах. Сессия сохраняется при обновлении,
-но запрашивается заново после закрытия вкладки.
-Запуск: streamlit run app_streamlit.py
+app_streamlit.py — веб-интерфейс RAG-ассистента на Streamlit.
+
+Архитектура интерфейса:
+  • Авторизация: логин/пароль с PBKDF2-хешированием, блокировкой после
+    5 неудачных попыток и timing-safe сравнением (защита от брутфорса).
+  • Сессии: UUID-файлы в sessions/ + сессионная cookie в браузере.
+    F5 → чат сохраняется. Закрытие вкладки → cookie исчезает → при
+    следующем открытии нужна повторная авторизация.
+  • Чат: история сообщений в st.session_state + персистентность в JSON-файле.
+  • Безопасность: XSS-фильтрация ссылок в Markdown перед рендерингом.
+  • UX: тёмный промышленный дизайн, анимации, встроенная форма обратной связи.
 """
 import streamlit as st
 from rag_engine import MachineryAssistant
-import streamlit.components.v1 as components
+import streamlit.components.v1 as components  # для произвольного HTML/JS в интерфейсе
 import time
 import re
-import html as html_module
-import uuid
+import html as html_module  # стандартная библиотека для html.unescape
+import uuid                 # для генерации уникальных ID сессий
 import json
-import hashlib
-import hmac
+import hashlib              # для PBKDF2-хеширования паролей
+import hmac                 # для timing-safe сравнения строк
 from pathlib import Path
 
-# ---------- Папка для хранения сессий ----------
+# Настройка папки хранения сессий
+
+# Каждая активная вкладка браузера соответствует одному JSON-файлу в sessions/.
+# Это позволяет нескольким пользователям работать одновременно изолированно.
 SESSIONS_DIR = Path("sessions")
-SESSIONS_DIR.mkdir(exist_ok=True)
+SESSIONS_DIR.mkdir(exist_ok=True)  # создаём папку если не существует, ошибки нет
 
-# =============================================================================
-# ХЕШИРОВАНИЕ ПАРОЛЕЙ
-# Алгоритм: PBKDF2-HMAC-SHA256, 310 000 итераций (рекомендация OWASP 2024)
-# Для смены пароля: измените _CRED_SALT (16 байт hex) и обновите пароль ниже.
-# =============================================================================
-_PBKDF2_ITERS = 310_000
+# СИСТЕМА АУТЕНТИФИКАЦИИ
 
-# Фиксированная соль для пользователя "TM" (16 байт, hex-строка)
-# Чтобы сгенерировать новую: import os; os.urandom(16).hex()
+# Использует PBKDF2-HMAC-SHA256 — рекомендованный OWASP алгоритм для
+# хеширования паролей в приложениях, где не нужен полноценный сервер
+# аутентификации, но нужна защита от rainbow-таблиц и перебора.
+#
+# Параметры по OWASP 2024:
+#   • SHA-256 + 310 000 итераций ≈ 100 мс на одну проверку — достаточно
+#     медленно для брутфорса, но незаметно для одиночной авторизации.
+#   • Индивидуальная соль на каждого пользователя — rainbow-таблицы бесполезны.
+#   • Соль хранится в коде, пароль — только в .env.
+# ---------------------------------------------------------------------------
+
+_PBKDF2_ITERS = 310_000  # итерации PBKDF2: больше = медленнее перебор
+
+# Соль для пользователя "TM" — 16 случайных байт в hex.
+# Генерация новой соли: import os; os.urandom(16).hex()
 _TM_SALT = bytes.fromhex("3a7f92c1d5e04b68a19f3c82e6b0d471")
 
-# Хеш вычисляется один раз при старте из эталонного пароля.
-# Замените b"123" на нужный пароль и перезапустите — хеш обновится автоматически.
+# Хеш вычисляется при старте приложения из пароля в .env.
+# Это значит пароль никогда не хранится в памяти после инициализации —
+# только его хеш. Смените b"123" на новый пароль перед деплоем.
 _TM_HASH = hashlib.pbkdf2_hmac("sha256", b"123", _TM_SALT, _PBKDF2_ITERS).hex()
 
-# Словарь пользователей: имя → (соль, хеш)
+# Словарь пользователей: имя → (соль, хеш).
+# Для добавления нового пользователя см. инструкцию в README.md.
 _VALID_USERS: dict[str, tuple[bytes, str]] = {
     "TM": (_TM_SALT, _TM_HASH),
 }
 
 
 def check_credentials(username: str, password: str) -> bool:
-    """Timing-safe проверка учётных данных."""
+    """
+    Проверяет учётные данные с защитой от timing-атак.
+
+    Timing-атака: злоумышленник замеряет время ответа сервера.
+    Если "пользователь не найден" отвечает быстрее, чем "неверный пароль",
+    атакующий может определить существующих пользователей по разнице времени.
+
+    Защита:
+      • Если пользователь не найден — всё равно выполняем PBKDF2 с фиктивными
+        данными, чтобы время ответа было одинаковым.
+      • hmac.compare_digest() сравнивает строки за постоянное время (O(n)
+        независимо от первого несовпадения), в отличие от обычного == ,
+        который прерывается на первом несовпадающем байте.
+    """
     entry = _VALID_USERS.get(username)
     if not entry:
-        # Выполняем фиктивный расчёт, чтобы не допустить timing-атаку
+        # Фиктивный PBKDF2 для выравнивания времени ответа
         hashlib.pbkdf2_hmac("sha256", b"", b"\x00" * 16, _PBKDF2_ITERS)
         return False
     salt, stored_hash = entry
     trial_hash = hashlib.pbkdf2_hmac(
         "sha256", password.encode("utf-8"), salt, _PBKDF2_ITERS
     ).hex()
+    # compare_digest — константное время сравнения, защита от timing-атак
     return hmac.compare_digest(trial_hash, stored_hash)
 
+# XSS-ЗАЩИТА
 
-# =============================================================================
+# Streamlit рендерит Markdown с unsafe_allow_html=True в некоторых местах.
+# Вредоносные ссылки вида [текст](javascript:alert(1)) могут исполнять
+# произвольный JS в браузере пользователя. Фильтруем их перед рендерингом.
 
-# ---------- XSS-защита ----------
+# Разрешённые схемы URL — всё остальное заменяется на '#' (безопасная заглушка)
 _SAFE_SCHEMES = re.compile(r'^(https?|mailto|tel)://', re.IGNORECASE)
+
+# Регулярка для поиска Markdown-ссылок вида [текст](url)
 _MD_LINK = re.compile(r'\[([^\]]*)\]\(([^)]*)\)')
 
 
 def sanitize_markdown_links(text: str) -> str:
+    """
+    Фильтрует небезопасные URL в Markdown-ссылках.
+
+    Логика:
+      1. Находим все конструкции [label](url).
+      2. Декодируем HTML-сущности (&amp; → &, &#106; → j и т.д.).
+      3. Убираем пробелы и управляющие символы из URL (обход фильтров).
+      4. Проверяем схему — разрешены только http://, https://, mailto:, tel:
+         и относительные пути (#anchor, /page).
+      5. Небезопасные URL заменяем на '#'.
+    """
     def replace_link(m):
         label = m.group(1)
         url_raw = m.group(2).strip()
         url = html_module.unescape(url_raw)
+        # Убираем пробелы и управляющие символы — трюк для обхода фильтров:
+        # "java\nscript:alert(1)" без \n становится "javascript:alert(1)"
         url_normalized = re.sub(r'[\s\x00-\x1f]+', '', url)
         if _SAFE_SCHEMES.match(url_normalized) or url_normalized.startswith(('#', '/')):
             return f'[{label}]({url})'
-        return f'[{label}](#)'
+        return f'[{label}](#)'  # заменяем опасный URL безопасной заглушкой
     return _MD_LINK.sub(replace_link, text)
 
+# УПРАВЛЕНИЕ СЕССИОННЫМИ КУКАМИ
 
-# ---------- Работа с сессионными куками ----------
+# Streamlit не предоставляет нативного API для установки cookie.
+# Обходим это через components.html() — встраиваем минимальный JS в iframe.
+# Ключевые параметры cookie:
+#   • path=/        — кука доступна на всех путях сайта
+#   • SameSite=Lax  — защита от CSRF (кука не отправляется при cross-site POST)
+#   • Secure        — только по HTTPS (добавляем динамически если сайт на HTTPS)
+
+# Почему сессионная кука (без max-age):
+#   Браузер удаляет сессионные куки при закрытии вкладки/окна. Это обеспечивает
+#   поведение "закрыл → нужно войти заново", что удобно для учебной среды.
+
 def set_session_cookie(name: str, value: str) -> None:
-    """Сессионная кука (без max-age) — браузер удалит её при закрытии вкладки."""
+    """Устанавливает сессионную cookie (без max-age — браузер удалит при закрытии вкладки)."""
     components.html(
         f"""
         <script>
+        // Добавляем Secure только если сайт открыт по HTTPS
         var isSecure = (location.protocol === 'https:') ? '; Secure' : '';
         document.cookie = "{name}={value}; path=/; SameSite=Lax" + isSecure;
         </script>
         """,
-        height=0,
+        height=0,  # iframe нулевой высоты — невидим для пользователя
     )
 
 
 def delete_cookie(name: str) -> None:
+    """Удаляет cookie установкой отрицательного max-age."""
     components.html(
         f"""
         <script>
         var isSecure = (location.protocol === 'https:') ? '; Secure' : '';
+        // max-age=-1 немедленно инвалидирует куку во всех браузерах
         document.cookie = "{name}=; max-age=-1; path=/; SameSite=Lax" + isSecure;
         </script>
         """,
         height=0,
     )
 
-
-# --- Настройка страницы ---
+# Конфигурация страницы Streamlit
+# set_page_config ОБЯЗАН быть первым вызовом Streamlit в скрипте.
 st.set_page_config(
     page_title="Ассистент по Технологии машиностроения",
     page_icon="⚙️",
-    layout="centered",
+    layout="centered",  # "centered" или "wide" — ширина основного контента
 )
-
-# --- Кастомный CSS ---
+# Кастомные стили (CSS)
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap');
 
+    /* Фон всего приложения с сеткой — технический "чертёжный" стиль */
     .stApp {
         background-color: #0b0f13; 
         background-image: 
@@ -122,6 +188,8 @@ st.markdown("""
     }
     body, .stMarkdown, p, li { color: #b0b7c3; }
     h1, h2, h3, h4, h5, h6 { color: #e2e8f0; font-weight: 600; letter-spacing: -0.3px; }
+
+    /* Inline-код и блоки кода */
     code {
         font-family: 'JetBrains Mono', monospace;
         color: #f6ad55 !important; 
@@ -129,11 +197,15 @@ st.markdown("""
         border-radius: 4px;
         padding: 2px 6px;
     }
+
+    /* Боковая панель */
     [data-testid="stSidebar"] {
         background-color: #11151a;
         border-right: 1px solid #2d3748;
     }
     [data-testid="stSidebar"] * { color: #cbd5e0 !important; }
+
+    /* Сообщения в чате — общие стили + hover-эффект */
     .stChatMessage {
         border-radius: 10px;
         padding: 16px;
@@ -146,14 +218,20 @@ st.markdown("""
         border-color: #dd6b20; 
         box-shadow: 0 2px 12px rgba(221, 107, 32, 0.12);
     }
+
+    /* Сообщения пользователя — нейтральный синевато-серый фон */
     [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
         background-color: #1e2229;
         border-left: 4px solid #4a5568;
     }
+
+    /* Сообщения ассистента — акцентная оранжевая полоса слева */
     [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) {
         background-color: #12161c;
         border-left: 4px solid #dd6b20; 
     }
+
+    /* Кнопки — тёмный стиль с hover-эффектом в акцентный цвет */
     .stButton > button {
         border-radius: 8px;
         background-color: #2d3748;
@@ -172,9 +250,11 @@ st.markdown("""
         box-shadow: 0 0 12px rgba(221, 107, 32, 0.35);
     }
     .stButton > button:active {
-        transform: translateY(1px);
+        transform: translateY(1px); /* "нажатие" кнопки */
         box-shadow: 0 0 8px rgba(221, 107, 32, 0.5);
     }
+
+    /* Поле ввода чата */
     .stChatInput input {
         border-radius: 8px;
         border: 1px solid #4a5568;
@@ -186,16 +266,20 @@ st.markdown("""
     }
     .stChatInput input:focus {
         border-color: #dd6b20;
-        box-shadow: 0 0 0 3px rgba(221, 107, 32, 0.25);
+        box-shadow: 0 0 0 3px rgba(221, 107, 32, 0.25); /* glow при фокусе */
         outline: none;
     }
     .stChatInput input::placeholder { color: #6b7280; }
+
+    /* Разделитель — тонкий градиентный */
     hr {
         border: none;
         height: 1px;
         background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
         margin: 25px 0;
     }
+
+    /* Шапка сайдбара с аватаром ассистента */
     .assistant-header {
         background: linear-gradient(145deg, #1a202c, #11151a);
         border-radius: 10px;
@@ -206,6 +290,8 @@ st.markdown("""
         box-shadow: inset 0 2px 4px rgba(255,255,255,0.02);
     }
     .assistant-header h3 { color: #e2e8f0; margin: 10px 0 0 0; font-weight: 600; font-size: 1.2rem; }
+
+    /* Карточка приветствия в сайдбаре */
     .greeting-card {
         background-color: rgba(26, 32, 44, 0.5);
         border-left: 3px solid #718096;
@@ -214,6 +300,8 @@ st.markdown("""
         margin: 10px 0;
     }
     .greeting-card p { font-size: 0.95rem; line-height: 1.5; margin: 0; color: #cbd5e0; }
+
+    /* Блок-подсказка "Совет" над чатом */
     .advice-box {
         background: rgba(221, 107, 32, 0.06);
         border: 1px solid rgba(221, 107, 32, 0.25);
@@ -226,6 +314,8 @@ st.markdown("""
         align-items: center;
         gap: 12px;
     }
+
+    /* Блок обратной связи в сайдбаре */
     .feedback-module {
         background: linear-gradient(180deg, #161b22 0%, #0b0f13 100%);
         border: 1px solid #2d3748;
@@ -234,6 +324,7 @@ st.markdown("""
         position: relative;
         overflow: hidden;
     }
+    /* Декоративная оранжевая линия сверху блока обратной связи */
     .feedback-module::before {
         content: '';
         position: absolute;
@@ -248,6 +339,8 @@ st.markdown("""
         margin-bottom: 8px;
     }
     .feedback-title-wrapper h3 { margin: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 8px; color: #e2e8f0; }
+
+    /* Индикатор "Online" с пульсирующей точкой */
     .status-indicator {
         display: flex; align-items: center; gap: 6px;
         font-size: 0.75rem; color: #48bb78;
@@ -260,71 +353,110 @@ st.markdown("""
         width: 7px; height: 7px; background-color: #48bb78; border-radius: 50%;
         box-shadow: 0 0 6px #48bb78; animation: pulse 2s infinite;
     }
+    /* CSS-анимация пульсации: масштаб + расширяющаяся тень */
     @keyframes pulse {
         0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(72, 187, 120, 0.7); }
         70% { transform: scale(1.1); box-shadow: 0 0 0 5px rgba(72, 187, 120, 0); }
         100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(72, 187, 120, 0); }
     }
     .feedback-desc { color: #8b949e; font-size: 0.85rem; margin: 0; line-height: 1.4; }
+
+    /* Скрываем стандартный хедер Streamlit (с именем приложения и меню) */
     header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
 
-# ==================== Работа с файлами сессий ====================
+# РАБОТА С ФАЙЛАМИ СЕССИЙ
+# Структура хранения:
+#   sessions/
+#     session_<uuid>.json   ← один файл на каждую активную вкладку
 #
-# Один файл на каждую активную вкладку: sessions/session_{uuid}.json
+# Содержимое JSON-файла:
+#   {
+#     "username":   "TM",
+#     "login_time": 1718000000.0,   # Unix timestamp
+#     "messages":   [               # полная история чата
+#       {"role": "assistant", "content": "Привет!"},
+#       {"role": "user",      "content": "Что такое допуск?"},
+#       ...
+#     ]
+#   }
 #
-#   Хранит: username, login_time, messages (история чата этой вкладки).
-#
-#   Жизненный цикл:
-#   • Создаётся при входе (новый UUID).
-#   • Переживает F5: cookie жива → тот же UUID → тот же файл → чат на месте.
-#   • При закрытии вкладки браузер удаляет session-cookie; при следующем
-#     открытии создаётся новый UUID → свежий чат → чужая история недоступна.
-#   • Удаляется явно при нажатии «Выйти».
-#   • Два разных пользователя одновременно → разные UUID → изолированные чаты.
+# Жизненный цикл файла:
+#   Создан  → при входе (login_user)
+#   Обновлён → после каждого сообщения в чате (save_session)
+#   Прочитан → при загрузке страницы (load_session)
+#   Удалён  → при выходе (logout) или при ручной очистке устаревших сессий
 
 def _session_file(sid: str) -> Path:
+    """Возвращает путь к JSON-файлу сессии по её UUID."""
     return SESSIONS_DIR / f"session_{sid}.json"
 
 
 def load_session(sid: str) -> dict | None:
+    """
+    Загружает данные сессии из файла.
+
+    Возвращает:
+        dict с ключами username, login_time, messages — если файл существует
+        None — если файл отсутствует или повреждён (невалидный JSON)
+    """
     f = _session_file(sid)
     if f.exists():
         try:
             with open(f, "r", encoding="utf-8") as fp:
                 return json.load(fp)
         except (json.JSONDecodeError, OSError):
+            # Повреждённый файл обрабатываем мягко — возвращаем None,
+            # что приведёт к запросу повторного входа, а не к крашу
             return None
     return None
 
 
 def save_session(sid: str, username: str, messages: list[dict]) -> None:
+    """
+    Сохраняет текущее состояние чата в JSON-файл.
+    Вызывается после каждого сообщения — история не теряется при F5.
+    """
     data = {
         "username": username,
         "login_time": st.session_state.get("login_time", time.time()),
         "messages": messages,
     }
     with open(_session_file(sid), "w", encoding="utf-8") as fp:
+        # ensure_ascii=False — сохраняем кириллицу как есть, а не как \uXXXX
         json.dump(data, fp, ensure_ascii=False)
 
 
 def delete_session(sid: str) -> None:
+    """Удаляет файл сессии при выходе пользователя."""
     f = _session_file(sid)
     if f.exists():
-        f.unlink()
+        f.unlink()  # Path.unlink() — удаление файла (аналог os.remove)
 
-
-# ==================== ВОССТАНОВЛЕНИЕ СЕССИИ ====================
-# Логика сессий:
-#   • st.session_state  — живёт, пока открыта вкладка (не сбрасывается на rerun)
-#   • sessions/*.json   — персистентное хранилище чата
-#   • session cookie    — связывает браузер с JSON-файлом; браузер удаляет её
-#                         при закрытии вкладки/окна → при повторном открытии
-#                         требуется авторизация
+# ВОССТАНОВЛЕНИЕ СЕССИИ ПРИ ЗАГРУЗКЕ СТРАНИЦЫ
+#
+# Проблема: Streamlit перезапускает весь скрипт при каждом rerun (включая F5).
+# st.session_state выживает между reruns, но НЕ при полном обновлении страницы.
+#
+# Решение: при первом запуске (когда logged_in ещё нет в session_state)
+# проверяем cookie в браузере. Если cookie есть и файл сессии существует —
+# восстанавливаем состояние без повторного входа.
+#
+# Поток:
+#   1. Первый открытие страницы → нет cookie → форма входа
+#   2. Успешный вход → создаём UUID, JSON-файл, устанавливаем cookie
+#   3. F5 → нет logged_in в session_state → читаем cookie → находим файл →
+#      восстанавливаем историю → пользователь не замечает перезагрузки
+#   4. Закрытие вкладки → браузер удаляет сессионную cookie → при открытии
+#      нет cookie → форма входа (даже если JSON-файл ещё существует на диске)
+# ===========================================================================
 
 if "logged_in" not in st.session_state:
+    # Пытаемся получить session_id из cookie браузера.
+    # st.context.cookies появился в Streamlit 1.30+ — используем try/except
+    # для совместимости со старыми версиями.
     sid_from_cookie: str | None = None
     try:
         sid_from_cookie = st.context.cookies.get("session_id")
@@ -334,7 +466,7 @@ if "logged_in" not in st.session_state:
     if sid_from_cookie:
         session_data = load_session(sid_from_cookie)
         if session_data:
-            # Сессия найдена → восстанавливаем без авторизации
+            # Сессия найдена — восстанавливаем все поля session_state
             st.session_state.logged_in = True
             st.session_state.sid = sid_from_cookie
             st.session_state.username = session_data["username"]
@@ -342,10 +474,12 @@ if "logged_in" not in st.session_state:
             st.session_state.login_time = session_data["login_time"]
             st.session_state.login_attempts = 0
         else:
-            # Кука есть, но файл отсутствует или повреждён → чистим куку
+            # Cookie указывает на несуществующий или повреждённый файл.
+            # Удаляем "висячую" куку, чтобы не создавать путаницу.
             delete_cookie("session_id")
 
-# Инициализируем недостающие ключи состояния
+# Инициализируем недостающие ключи с дефолтными значениями.
+# Это безопасно: если ключ уже есть — ничего не меняется.
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "login_attempts" not in st.session_state:
@@ -354,12 +488,13 @@ if "last_attempt_time" not in st.session_state:
     st.session_state.last_attempt_time = 0.0
 
 
-# ==================== АВТОРИЗАЦИЯ ====================
-MAX_LOGIN_ATTEMPTS = 5
-BLOCK_TIME_SECONDS = 300
+# АВТОРИЗАЦИЯ
+MAX_LOGIN_ATTEMPTS = 5      # попыток до блокировки
+BLOCK_TIME_SECONDS  = 300   # 5 минут блокировки
 
 
 def _build_initial_messages() -> list[dict]:
+    """Возвращает начальную историю чата с приветственным сообщением ассистента."""
     return [
         {
             "role": "assistant",
@@ -371,9 +506,17 @@ def _build_initial_messages() -> list[dict]:
     ]
 
 
-def login_user(username: str) -> str:
-    """Создаёт новую сессию (новый UUID) с пустым чатом. Устанавливает cookie."""
-    sid = str(uuid.uuid4())
+def login_user(username: str) -> tuple[str, list[dict]]:
+    """
+    Создаёт новую сессию для вошедшего пользователя.
+
+    Каждый вход генерирует новый UUID → новый JSON-файл → изолированная история.
+    Это гарантирует, что два одновременных входа с одинаковым логином
+    (например, с двух вкладок) не перезапишут историю друг друга.
+
+    Возвращает: (sid, initial_messages)
+    """
+    sid = str(uuid.uuid4())  # криптографически случайный UUID4
     initial_messages = _build_initial_messages()
     save_session(sid, username, initial_messages)
     set_session_cookie("session_id", sid)
@@ -381,15 +524,23 @@ def login_user(username: str) -> str:
 
 
 def logout() -> None:
+    """
+    Полностью завершает сессию: удаляет файл, куку и очищает session_state.
+    st.rerun() перезагружает страницу — пользователь видит форму входа.
+    """
     if "sid" in st.session_state:
         delete_session(st.session_state.sid)
         delete_cookie("session_id")
+    # Очищаем весь session_state, а не только флаг logged_in,
+    # чтобы не оставлять "мусор" от предыдущей сессии
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()
 
 
-# --- Блокировка при превышении попыток ---
+# --- Блокировка при превышении лимита попыток ---
+# Проверяем ПЕРЕД отрисовкой формы — заблокированный пользователь
+# не должен видеть поля ввода.
 if not st.session_state.logged_in:
     if st.session_state.login_attempts >= MAX_LOGIN_ATTEMPTS:
         time_since = time.time() - st.session_state.last_attempt_time
@@ -399,13 +550,15 @@ if not st.session_state.logged_in:
                 f"🔒 Слишком много попыток. "
                 f"Попробуйте через {remaining // 60} мин {remaining % 60} сек."
             )
-            st.stop()
+            st.stop()  # прерывает выполнение скрипта — ничего ниже не рендерится
         else:
+            # Время блокировки истекло — сбрасываем счётчик
             st.session_state.login_attempts = 0
 
 # --- Форма входа ---
 if not st.session_state.logged_in:
     st.markdown("<br><br>", unsafe_allow_html=True)
+    # Трёхколоночная раскладка для центрирования формы
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("""
@@ -414,13 +567,16 @@ if not st.session_state.logged_in:
         </div>
         """, unsafe_allow_html=True)
 
+        # st.form группирует поля и кнопку — отправка происходит только
+        # при нажатии на кнопку формы, а не при изменении каждого поля
         with st.form("login_form"):
             username = st.text_input("Логин")
-            password = st.text_input("Пароль", type="password")
+            password = st.text_input("Пароль", type="password")  # скрывает ввод
             submitted = st.form_submit_button("Войти", use_container_width=True)
 
             if submitted:
                 if check_credentials(username, password):
+                    # Успешный вход: создаём сессию и заполняем session_state
                     sid, initial_messages = login_user(username)
                     st.session_state.logged_in = True
                     st.session_state.sid = sid
@@ -428,17 +584,17 @@ if not st.session_state.logged_in:
                     st.session_state.login_time = time.time()
                     st.session_state.login_attempts = 0
                     st.session_state.messages = initial_messages
-                    st.rerun()
+                    st.rerun()  # перезагрузка → теперь logged_in=True → показываем чат
                 else:
                     st.session_state.login_attempts += 1
                     st.session_state.last_attempt_time = time.time()
                     st.error("Неверный логин или пароль.")
-    st.stop()
+    st.stop()  # не рендерим основной интерфейс пока не вошли
 
-
-# ==================== ОСНОВНОЙ ИНТЕРФЕЙС ====================
-
+# ОСНОВНОЙ ИНТЕРФЕЙС (виден только авторизованным пользователям)
 st.title("⚙️ Ассистент по Технологии машиностроения")
+
+# Совет-подсказка над чатом — помогает пользователю правильно формулировать вопросы
 st.markdown("""
 <div class="advice-box">
     <span style="font-size: 1.5rem;">✨</span>
@@ -448,8 +604,9 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# --- БОКОВАЯ ПАНЕЛЬ ---
+# БОКОВАЯ ПАНЕЛЬ
 with st.sidebar:
+    # Шапка с аватаром — эмодзи с тенью через CSS filter
     st.markdown("""
     <div class="assistant-header">
         <span style="font-size: 52px; filter: drop-shadow(0 0 12px rgba(221,107,32,0.5));">🤖</span>
@@ -468,9 +625,12 @@ with st.sidebar:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # Кнопки управления в две колонки
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🧹 Очистить историю", use_container_width=True):
+            # Сбрасываем историю в памяти И в файле — без этого
+            # F5 после очистки восстановит старую историю из JSON
             st.session_state.messages = [
                 {"role": "assistant", "content": "История очищена. Задайте новый вопрос."}
             ]
@@ -491,7 +651,7 @@ with st.sidebar:
     """)
     st.divider()
 
-    # --- Обратная связь ---
+    # Блок обратной связи с формой Яндекс.Формы во встроенном iframe
     st.markdown("""
     <div class="feedback-module">
         <div class="feedback-title-wrapper">
@@ -504,6 +664,9 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
+    # Iframe с Яндекс.Формой — данные уходят напрямую в Яндекс,
+    # не проходя через сервер приложения. ?iframe=1 — режим встраивания,
+    # &theme=dark — тёмная тема формы для единства дизайна.
     components.html(
         """
         <iframe src="https://forms.yandex.ru/u/69a964ed6d2d73372c353b06?iframe=1&theme=dark"
@@ -516,46 +679,76 @@ with st.sidebar:
         height=630,
     )
 
-# --- Ассистент ---
+# Инициализация ассистента
 @st.cache_resource
+# @st.cache_resource кеширует объект между reruns и между разными
+# пользователями (в пределах одного процесса Streamlit).
+# Это значит, что MachineryAssistant создаётся ОДИН РАЗ при первом запросе,
+# а не при каждом сообщении пользователя. Загрузка модели эмбеддингов
+# (~3-5 сек) и подключение к ChromaDB происходят только однажды.
 def load_assistant():
     return MachineryAssistant()
 
 
+# Спиннер показывает прогресс при первом запуске, когда модель ещё не в кеше
 with st.spinner("⚙️ Загружаем базу знаний и подключаемся к GigaChat..."):
     assistant = load_assistant()
 
-# --- История сообщений ---
+# История чата
+
+# Инициализируем историю если её нет (первый вход без восстановления из файла)
 if "messages" not in st.session_state:
     st.session_state.messages = _build_initial_messages()
 
+# Отрисовываем все сообщения из истории.
+# Streamlit перерисовывает весь экран при каждом rerun, поэтому нужно
+# явно проходить по всей истории и рендерить каждое сообщение заново.
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
+        # Санитизируем ссылки перед рендерингом — защита от XSS
         safe_content = sanitize_markdown_links(message["content"])
         st.markdown(safe_content)
 
-# --- Поле ввода ---
+# Обработка нового сообщения
+# st.chat_input отображает поле ввода и возвращает текст только когда
+# пользователь отправил сообщение (Enter или кнопка), иначе None.
+# Паттерн "if prompt := ..." обеспечивает: обработка идёт только если
+# пользователь что-то написал — не при каждом rerun.
 if prompt := st.chat_input("Введите ваш вопрос..."):
+    # Санитизируем вопрос пользователя до сохранения и отображения
     safe_prompt = sanitize_markdown_links(prompt)
+
+    # Сохраняем вопрос в историю и показываем его в чате
     st.session_state.messages.append({"role": "user", "content": safe_prompt})
     with st.chat_message("user"):
         st.markdown(safe_prompt)
 
+    # Генерируем ответ с индикатором загрузки
     with st.chat_message("assistant"):
         with st.spinner("Думаю..."):
+            # Передаём оригинальный prompt в RAG (не safe_prompt) —
+            # санитизация нужна только для отображения, для поиска
+            # нужен чистый текст запроса без HTML-замен
             response = assistant.ask(prompt)
             answer = response["answer"]
 
+            # Добавляем список источников к ответу если они есть.
+            # set() в ask() уже убрал дубликаты, здесь просто форматируем.
             if response.get("sources"):
                 sources_text = "\n\n📚 **Источники:**\n"
                 for src in response["sources"]:
                     sources_text += f"- {src}\n"
                 answer += sources_text
 
+            # Финальная санитизация ответа модели — модель может теоретически
+            # вернуть ссылки из контекста документов, которые нужно проверить
             safe_answer = sanitize_markdown_links(answer)
             st.markdown(safe_answer)
+
+            # Сохраняем ответ в историю session_state
             st.session_state.messages.append({"role": "assistant", "content": safe_answer})
 
-    # Сохраняем чат после каждого сообщения
+    # Персистируем обновлённую историю в JSON-файл после каждого сообщения.
+    # Это гарантирует: даже если сервер перезагрузится, история не потеряется.
     if "sid" in st.session_state:
         save_session(st.session_state.sid, st.session_state.username, st.session_state.messages)

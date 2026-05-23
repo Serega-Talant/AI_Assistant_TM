@@ -1,27 +1,56 @@
-# Веб-интерфейс
-streamlit>=1.30.0 # — веб‑интерфейс
+# requirements.txt — зависимости Python-проекта.
 
-# LangChain (ядро и интеграции)
+# Streamlit — фреймворк для быстрого создания веб-приложений на Python.
+# Превращает Python-скрипт в интерактивный веб-интерфейс без HTML/JS.
+# 1.30+ требуется для st.context.cookies (восстановление сессий).
+streamlit>=1.30.0
+
+# LangChain — фреймворк для построения LLM-приложений
+# LangChain разбит на множество пакетов — устанавливаем только нужные
+
+# Ядро LangChain: базовые абстракции (Chain, Runnable и т.д.)
 langchain>=0.3.0
-langchain-core>=0.3.0 # — основа для цепочек
-langchain-community>=0.3.0 # — загрузчики документов (TextLoader, PyPDFLoader, DirectoryLoader)
-langchain-text-splitters>=0.3.0 # — RecursiveCharacterTextSplitter
-langchain-chroma>=0.1.2 # — подключение к векторной базе
-langchain-huggingface>=0.1.0 # — локальные эмбеддинги через HuggingFaceEmbeddings
-langchain-gigachat>=0.3.8 # — LLM от Сбера
 
-# GigaChat API клиент
-gigachat>=0.1.0 # — LLM от Сбера
+# langchain-core: LCEL (LangChain Expression Language), промпты,
+# парсеры вывода, интерфейсы для LLM и ретриверов
+langchain-core>=0.3.0
 
-# Векторная база данных
-chromadb>=0.4.0 # — векторное хранилище
+# langchain-community: загрузчики документов (TextLoader, PyPDFLoader,
+# DirectoryLoader) и другие интеграции сообщества
+langchain-community>=0.3.0
 
-# Локальные эмбеддинги
-sentence-transformers>=2.2.0 # — загрузка модели эмбеддингов (paraphrase-multilingual-MiniLM-L12-v2)
+# langchain-text-splitters: RecursiveCharacterTextSplitter и другие
+# стратегии нарезки текста на чанки
+langchain-text-splitters>=0.3.0
 
-# Загрузка документов
-pypdf>=4.0.0 # — чтение PDF
-docx2txt>=0.8 # — чтение DOCX
+# langchain-chroma: официальная интеграция LangChain с ChromaDB.
+# Предоставляет класс Chroma с методами from_documents() и as_retriever()
+langchain-chroma>=0.1.2
 
-# Переменные окружения
-python-dotenv>=1.0.0 # — загрузка .env с ключами
+# langchain-huggingface: интеграция с HuggingFace.
+# Нужен для HuggingFaceEmbeddings — обёртки над sentence-transformers
+langchain-huggingface>=0.1.0
+
+# langchain-gigachat: официальный пакет для работы с GigaChat API от Сбера.
+# Предоставляет класс GigaChat, совместимый с интерфейсом LangChain LLM
+langchain-gigachat>=0.3.8
+
+# GigaChat API
+# Низкоуровневый клиент GigaChat API — используется langchain-gigachat внутри.
+gigachat>=0.1.0
+
+# ChromaDB — встраиваемая векторная БД, работающая локально без внешних сервисов. 
+chromadb>=0.4.0
+
+# sentence-transformers — библиотека для загрузки и использования
+# предобученных моделей эмбеддингов с HuggingFace Hub.
+sentence-transformers>=2.2.0
+
+# pypdf — чистый Python-парсер PDF. 
+pypdf>=4.0.0
+
+# docx2txt — простой экстрактор текста из .docx файлов.
+docx2txt>=0.8
+
+# python-dotenv — загружает переменные из файла .env в os.environ.
+python-dotenv>=1.0.0
