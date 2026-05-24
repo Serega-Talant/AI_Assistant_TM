@@ -150,7 +150,6 @@ class MachineryAssistant:
             ("system", system_prompt),
             ("human", "{question}"),
         ])
-
         # Цепочка | — LCEL pipe:
         #   prompt        → принимает dict, возвращает ChatPromptValue
         #   self.llm      → принимает ChatPromptValue, возвращает AIMessage
