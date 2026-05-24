@@ -30,6 +30,34 @@ from pathlib import Path
 SESSIONS_DIR = Path("sessions")
 SESSIONS_DIR.mkdir(exist_ok=True)  # создаём папку если не существует, ошибки нет
 
+# --- Персистентный счётчик неудачных попыток ---
+_ATTEMPTS_FILE = SESSIONS_DIR / "_login_attempts.json"
+
+def _load_attempts() -> tuple[int, float]:
+    """Читает счётчик попыток и время последней из файла."""
+    try:
+        if _ATTEMPTS_FILE.exists():
+            data = json.loads(_ATTEMPTS_FILE.read_text(encoding="utf-8"))
+            return data.get("count", 0), data.get("last_time", 0.0)
+    except (json.JSONDecodeError, OSError):
+        pass
+    return 0, 0.0
+
+def _save_attempts(count: int, last_time: float) -> None:
+    """Сохраняет счётчик попыток и время последней в файл."""
+    try:
+        _ATTEMPTS_FILE.write_text(
+            json.dumps({"count": count, "last_time": last_time}),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+def _reset_attempts() -> None:
+    """Сбрасывает счётчик и удаляет файл."""
+    if _ATTEMPTS_FILE.exists():
+        _ATTEMPTS_FILE.unlink()
+
 # СИСТЕМА АУТЕНТИФИКАЦИИ
 
 # Использует PBKDF2-HMAC-SHA256 — рекомендованный OWASP алгоритм для
@@ -371,7 +399,6 @@ st.markdown("""
 # Структура хранения:
 #   sessions/
 #     session_<uuid>.json   ← один файл на каждую активную вкладку
-#
 # Содержимое JSON-файла:
 #   {
 #     "username":   "TM",
@@ -382,7 +409,6 @@ st.markdown("""
 #       ...
 #     ]
 #   }
-#
 # Жизненный цикл файла:
 #   Создан  → при входе (login_user)
 #   Обновлён → после каждого сообщения в чате (save_session)
@@ -474,7 +500,7 @@ if "logged_in" not in st.session_state:
             st.session_state.login_time = session_data["login_time"]
             st.session_state.login_attempts = 0
         else:
-            # Cookie указывает на несуществующий или повреждённый файл.
+            # Cookie указывает на несуществующий или повреждённый файл.+
             # Удаляем "висячую" куку, чтобы не создавать путаницу.
             delete_cookie("session_id")
 
@@ -483,9 +509,9 @@ if "logged_in" not in st.session_state:
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "login_attempts" not in st.session_state:
-    st.session_state.login_attempts = 0
-if "last_attempt_time" not in st.session_state:
-    st.session_state.last_attempt_time = 0.0
+    _attempts, _last_time = _load_attempts()
+    st.session_state.login_attempts = _attempts
+    st.session_state.last_attempt_time = _last_time
 
 
 # АВТОРИЗАЦИЯ
@@ -550,10 +576,11 @@ if not st.session_state.logged_in:
                 f"🔒 Слишком много попыток. "
                 f"Попробуйте через {remaining // 60} мин {remaining % 60} сек."
             )
-            st.stop()  # прерывает выполнение скрипта — ничего ниже не рендерится
+            time.sleep(1)   # ← ждём секунду и перерисовываем — таймер тикает
+            st.rerun()
         else:
-            # Время блокировки истекло — сбрасываем счётчик
             st.session_state.login_attempts = 0
+            _reset_attempts()   # ← сбрасываем файл тоже
 
 # --- Форма входа ---
 if not st.session_state.logged_in:
@@ -583,11 +610,16 @@ if not st.session_state.logged_in:
                     st.session_state.username = username
                     st.session_state.login_time = time.time()
                     st.session_state.login_attempts = 0
+                    _reset_attempts()
                     st.session_state.messages = initial_messages
                     st.rerun()  # перезагрузка → теперь logged_in=True → показываем чат
                 else:
                     st.session_state.login_attempts += 1
                     st.session_state.last_attempt_time = time.time()
+                    _save_attempts(                         # ← сохраняем в файл
+                        st.session_state.login_attempts,
+                        st.session_state.last_attempt_time,
+                    )
                     st.error("Неверный логин или пароль.")
     st.stop()  # не рендерим основной интерфейс пока не вошли
 
