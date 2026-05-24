@@ -114,7 +114,6 @@ class MachineryAssistant:
     def _format_docs(self, docs: list) -> str:
         """
         Объединяет список Document-объектов в одну строку для промпта.
-
         Двойной перенос строки (\n\n) между чанками помогает модели
         визуально разделять фрагменты из разных мест документа.
         """
@@ -123,11 +122,9 @@ class MachineryAssistant:
     def _create_answer_chain(self):
         """
         Собирает LCEL-цепочку: промпт → LLM → парсер вывода.
-
         LCEL (LangChain Expression Language) использует оператор |
         ("pipe") для соединения компонентов — каждый компонент
         принимает вывод предыдущего как входные данные.
-
         Итоговая цепочка:
           dict(context, question)
             → ChatPromptTemplate → ChatPromptValue
@@ -145,7 +142,6 @@ class MachineryAssistant:
             "4. Не придумывай факты и не используй знания вне контекста.\n\n"
             "Контекст:\n{context}"
         )
-
         # ChatPromptTemplate.from_messages — создаёт шаблон в формате диалога.
         # "system" — инструкции для модели (не видны пользователю).
         # "human"  — сообщение от пользователя, {question} — переменная.
